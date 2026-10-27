@@ -2,8 +2,8 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, and email notifications.
-Version: 5.0
+Description: Hybrid checkout generator supporting both secure shortcodes and static Elementor HTML blocks.
+Version: 5.1
 Author: Fareed M Rifaideen
 */
 
@@ -229,8 +229,6 @@ function tcb_render_checkout_form($atts) {
 
     $item_name = sanitize_text_field($a['item']);
     $price = floatval($a['price']);
-    
-    // Cryptographic signature preventing front-end price manipulation
     $price_hash = wp_hash($item_name . '|' . $price, 'nonce');
 
     ob_start();
@@ -304,7 +302,6 @@ function tcb_render_checkout_form($atts) {
         var discountDisp = document.querySelector('#cb-discount-display');
         var totalDisp = document.querySelector('#cb-total-display');
 
-        // Retrieve secured base price dynamically
         var basePrice = parseFloat(document.getElementById('cb_base_price').value);
         var activeDiscount = 0;
 
@@ -424,7 +421,16 @@ function tcb_ajax_validate_promo() {
     $base_price = isset($_POST['cb_base_price']) ? floatval($_POST['cb_base_price']) : 0;
     $hash       = isset($_POST['cb_price_hash']) ? sanitize_text_field($_POST['cb_price_hash']) : '';
 
-    if (empty($promo) || $sets < 1 || !tcb_verify_checkout_payload($item_name, $base_price, $hash)) { 
+    $is_valid = false;
+    if (!empty($hash)) {
+        $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
+    } else {
+        // STATIC HTML FALLBACK: Allows Elementor custom block to function without strict hash
+        $base_price = 600;
+        $is_valid = true;
+    }
+
+    if (empty($promo) || $sets < 1 || !$is_valid) { 
         wp_send_json_error('Security validation failed.'); 
     }
 
@@ -457,12 +463,21 @@ function tcb_process_turkey_payment() {
     $sets       = isset($_POST['sets']) ? intval($_POST['sets']) : 0;
     $promo      = isset($_POST['promo']) ? strtoupper(sanitize_text_field($_POST['promo'])) : '';
     
-    // Security fields
     $item_name  = isset($_POST['cb_item_name']) ? sanitize_text_field($_POST['cb_item_name']) : '';
     $base_price = isset($_POST['cb_base_price']) ? floatval($_POST['cb_base_price']) : 0;
     $hash       = isset($_POST['cb_price_hash']) ? sanitize_text_field($_POST['cb_price_hash']) : '';
 
-    if (empty($first_name) || empty($email) || $sets < 1 || !tcb_verify_checkout_payload($item_name, $base_price, $hash)) {
+    $is_valid = false;
+    if (!empty($hash)) {
+        $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
+    } else {
+        // STATIC HTML FALLBACK: Allows Elementor custom block to function without strict hash
+        $item_name = 'Turkey Takeaway 2026';
+        $base_price = 600;
+        $is_valid = true;
+    }
+
+    if (empty($first_name) || empty($email) || $sets < 1 || !$is_valid) {
         wp_send_json_error('Invalid submission data.');
     }
 
