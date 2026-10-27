@@ -2,24 +2,16 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Handles custom Elementor form checkouts, calculates discounts, creates local logs, and connects to The Cycle Hub payment bridge.
-Version: 1.1
+Description: Handles custom Elementor form checkouts, dynamic promos, and provides an Order Management Dashboard.
+Version: 2.0
 Author: Fareed M Rifaideen
 */
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-// --- 1. PROMO CODE CONFIGURATION ---
-// Manage your active discounts here. You can add fixed amounts or percentages.
-function tcb_get_valid_promos() {
-    return array(
-        'VIP2026'   => array('type' => 'percent', 'value' => 10),  // 10% off total
-        'STAFF'     => array('type' => 'percent', 'value' => 100), // 100% free bypass
-        'EARLYBIRD' => array('type' => 'fixed',   'value' => 50),  // 50 AED off total
-    );
-}
-
-// --- 2. DATABASE SETUP ---
+// ==========================================
+// 1. DATABASE SETUP FOR ORDERS
+// ==========================================
 register_activation_hook( __FILE__, 'tcb_create_local_transaction_table' );
 add_action( 'plugins_loaded', 'tcb_create_local_transaction_table' );
 
@@ -43,10 +35,162 @@ function tcb_create_local_transaction_table() {
         PRIMARY KEY  (id)
     ) $charset_collate;";
     require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-    dbDelta( $sql ); // dbDelta safely adds the new promo columns to your existing table
+    dbDelta( $sql ); 
 }
 
-// --- 3. AJAX: LIVE PROMO VALIDATOR (For Frontend) ---
+// ==========================================
+// 2. ORDER MANAGEMENT DASHBOARD
+// ==========================================
+add_action('admin_menu', 'tcb_register_order_dashboard');
+
+function tcb_register_order_dashboard() {
+    add_menu_page(
+        'Turkey Orders', 
+        'Turkey Orders', 
+        'manage_woocommerce', // Requires shop manager or admin capabilities
+        'tcb-turkey-orders', 
+        'tcb_render_order_dashboard', 
+        'dashicons-list-view', 
+        56
+    );
+}
+
+function tcb_render_order_dashboard() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'tcb_transactions';
+    $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY order_date DESC LIMIT 200");
+    ?>
+    <div class="wrap">
+        <h1 class="wp-heading-inline">Turkey Takeaway Orders 2026</h1>
+        <p>Live transaction logs from the Elementor checkout bridge.</p>
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th style="width: 120px;">Date</th>
+                    <th>Order Ref</th>
+                    <th>Customer</th>
+                    <th>Email</th>
+                    <th style="width: 60px;">Sets</th>
+                    <th>Promo Used</th>
+                    <th>Total Paid</th>
+                    <th>Gateway Ref</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($results)) : ?>
+                    <tr><td colspan="9">No orders found.</td></tr>
+                <?php else : ?>
+                    <?php foreach ($results as $row) : 
+                        $status_color = (strpos($row->status, 'Paid') !== false) ? 'color: #176b3b; font-weight: bold;' : ((strpos($row->status, 'Pending') !== false) ? 'color: #b45309;' : 'color: #dc2626;');
+                    ?>
+                        <tr>
+                            <td><?php echo esc_html(date('M d, H:i', strtotime($row->order_date))); ?></td>
+                            <td><strong><?php echo esc_html($row->order_ref); ?></strong></td>
+                            <td><?php echo esc_html($row->customer_name); ?></td>
+                            <td><a href="mailto:<?php echo esc_attr($row->customer_email); ?>"><?php echo esc_html($row->customer_email); ?></a></td>
+                            <td><?php echo esc_html($row->sets); ?></td>
+                            <td>
+                                <?php if($row->promo_code): ?>
+                                    <span style="background:#edf7df; color:#176b3b; padding:3px 6px; border-radius:4px; font-size:11px; font-weight:bold;"><?php echo esc_html($row->promo_code); ?></span>
+                                <?php else: ?>
+                                    -
+                                <?php endif; ?>
+                            </td>
+                            <td><strong>AED <?php echo esc_html($row->amount); ?></strong></td>
+                            <td><small><?php echo esc_html($row->ngenius_ref ?: '-'); ?></small></td>
+                            <td style="<?php echo $status_color; ?>"><?php echo esc_html($row->status); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
+
+// ==========================================
+// 3. PROMO CODE MANAGEMENT (CUSTOM POST TYPE)
+// ==========================================
+add_action('init', 'tcb_register_promo_cpt');
+
+function tcb_register_promo_cpt() {
+    register_post_type('tcb_promo', array(
+        'labels' => array(
+            'name'          => 'Promo Codes',
+            'singular_name' => 'Promo Code',
+            'add_new'       => 'Add New Promo',
+            'add_new_item'  => 'Add New Promo Code',
+            'edit_item'     => 'Edit Promo Code',
+        ),
+        'public'      => false,
+        'show_ui'     => true,
+        'show_in_menu'=> 'tcb-turkey-orders', // Place it under the Turkey Orders menu
+        'supports'    => array('title'), // Title will be the Promo Code itself
+    ));
+}
+
+// Add Meta Box for Promo Settings
+add_action('add_meta_boxes', 'tcb_add_promo_meta_box');
+function tcb_add_promo_meta_box() {
+    add_meta_box('tcb_promo_details', 'Discount Details', 'tcb_render_promo_meta_box', 'tcb_promo', 'normal', 'high');
+}
+
+function tcb_render_promo_meta_box($post) {
+    wp_nonce_field('tcb_save_promo_data', 'tcb_promo_nonce');
+    $type = get_post_meta($post->ID, '_promo_type', true) ?: 'fixed';
+    $value = get_post_meta($post->ID, '_promo_value', true) ?: '';
+    ?>
+    <p><strong style="color:#dc2626;">Instruction:</strong> Use the Title field above as the actual Promo Code (e.g., VIP2026, STAFF).</p>
+    <table class="form-table">
+        <tr>
+            <th><label for="promo_type">Discount Type</label></th>
+            <td>
+                <select name="promo_type" id="promo_type">
+                    <option value="fixed" <?php selected($type, 'fixed'); ?>>Fixed Amount (AED)</option>
+                    <option value="percent" <?php selected($type, 'percent'); ?>>Percentage (%)</option>
+                </select>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="promo_value">Discount Value</label></th>
+            <td>
+                <input type="number" step="0.01" name="promo_value" id="promo_value" value="<?php echo esc_attr($value); ?>" class="regular-text" required>
+                <p class="description">Enter the number without currency symbols (e.g., 50 for 50 AED or 100 for 100% Free).</p>
+            </td>
+        </tr>
+    </table>
+    <?php
+}
+
+add_action('save_post', 'tcb_save_promo_meta');
+function tcb_save_promo_meta($post_id) {
+    if (!isset($_POST['tcb_promo_nonce']) || !wp_verify_nonce($_POST['tcb_promo_nonce'], 'tcb_save_promo_data')) return;
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+    if (!current_user_can('edit_post', $post_id)) return;
+
+    if (isset($_POST['promo_type'])) { update_post_meta($post_id, '_promo_type', sanitize_text_field($_POST['promo_type'])); }
+    if (isset($_POST['promo_value'])) { update_post_meta($post_id, '_promo_value', floatval($_POST['promo_value'])); }
+}
+
+// Fetch Promos Dynamically from the CPT
+function tcb_get_valid_promos() {
+    $promos = array();
+    $query = new WP_Query(array('post_type' => 'tcb_promo', 'posts_per_page' => -1, 'post_status' => 'publish'));
+    if ($query->have_posts()) {
+        foreach ($query->posts as $p) {
+            $type = get_post_meta($p->ID, '_promo_type', true);
+            $val = get_post_meta($p->ID, '_promo_value', true);
+            // Use the Post Title as the Promo Code, converted to uppercase
+            $promos[strtoupper(trim($p->post_title))] = array('type' => $type, 'value' => (float)$val);
+        }
+    }
+    return $promos;
+}
+
+// ==========================================
+// 4. AJAX: LIVE PROMO VALIDATOR (For Frontend)
+// ==========================================
 add_action('wp_ajax_nopriv_tcb_validate_promo', 'tcb_ajax_validate_promo');
 add_action('wp_ajax_tcb_validate_promo', 'tcb_ajax_validate_promo');
 
@@ -67,16 +211,18 @@ function tcb_ajax_validate_promo() {
             $discount_amt = $base_total * ($promos[$promo]['value'] / 100);
         }
         
-        wp_send_json_success(array(
-            'code' => $promo,
-            'discount' => round($discount_amt, 2)
-        ));
+        // Cap discount so total doesn't go below 0
+        $discount_amt = min($discount_amt, $base_total);
+
+        wp_send_json_success(array('code' => $promo, 'discount' => round($discount_amt, 2)));
     } else {
         wp_send_json_error('Invalid or expired promo code.');
     }
 }
 
-// --- 4. AJAX: FINAL PAYMENT PROCESSOR ---
+// ==========================================
+// 5. AJAX: FINAL PAYMENT PROCESSOR
+// ==========================================
 add_action('wp_ajax_nopriv_tcb_process_turkey', 'tcb_process_turkey_payment');
 add_action('wp_ajax_tcb_process_turkey', 'tcb_process_turkey_payment');
 
@@ -93,7 +239,6 @@ function tcb_process_turkey_payment() {
         wp_send_json_error('Missing required fields.');
     }
 
-    // Server-Side Math
     $base_total = $sets * 600;
     $discount_amt = 0;
     $promos = tcb_get_valid_promos();
@@ -121,13 +266,11 @@ function tcb_process_turkey_payment() {
         'status'         => 'Pending'
     ));
 
-    // 100% Free Bypass Logic (Avoids sending a 0 AED transaction to N-Genius)
     if ($final_amount <= 0) {
         $wpdb->update($table_name, array('status' => 'Paid - 100% Free VIP'), array('order_ref' => $local_order_id));
         wp_send_json_success( array( 'payment_url' => site_url('/thank-you/?ref=' . $local_order_id . '-VIP') ) );
     }
 
-    // Send Payload to Main Site Proxy
     $main_site_url = 'https://thecyclehub.com'; 
     $endpoint      = $main_site_url . '/wp-json/bistro-bridge/v1/pay';
 
@@ -158,7 +301,9 @@ function tcb_process_turkey_payment() {
     }
 }
 
-// --- 5. VERIFICATION SHORTCODE ---
+// ==========================================
+// 6. VERIFICATION SHORTCODE
+// ==========================================
 add_shortcode('tcb_verify_payment', 'tcb_render_verification_status');
 
 function tcb_render_verification_status() {
@@ -168,7 +313,6 @@ function tcb_render_verification_status() {
 
     $reference = sanitize_text_field($_GET['ref']);
     
-    // Auto-approve 100% Free VIP bypasses
     if (strpos($reference, '-VIP') !== false) {
         return '<div style="padding:30px; background:#f4fdf4; border:2px solid #176b3b; text-align:center; border-radius:12px; margin-bottom: 20px;">
                     <h2 style="color:#176b3b; margin-top:0;">Reservation Confirmed!</h2>
