@@ -3,7 +3,7 @@
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
 Description: Handles custom Elementor form checkouts, dynamic promos, and provides an Order Management Dashboard.
-Version: 2.0
+Version: 2.1
 Author: Fareed M Rifaideen
 */
 
@@ -44,14 +44,25 @@ function tcb_create_local_transaction_table() {
 add_action('admin_menu', 'tcb_register_order_dashboard');
 
 function tcb_register_order_dashboard() {
+    // Top-Level Menu
     add_menu_page(
         'Turkey Orders', 
         'Turkey Orders', 
-        'manage_woocommerce', // Requires shop manager or admin capabilities
+        'manage_options', // Changed to manage_options for standard WP admins
         'tcb-turkey-orders', 
         'tcb_render_order_dashboard', 
         'dashicons-list-view', 
         56
+    );
+
+    // Explicitly add the Dashboard as the first submenu item
+    add_submenu_page(
+        'tcb-turkey-orders',
+        'View Orders',
+        'View Orders',
+        'manage_options',
+        'tcb-turkey-orders',
+        'tcb_render_order_dashboard'
     );
 }
 
