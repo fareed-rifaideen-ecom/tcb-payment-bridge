@@ -2,8 +2,8 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Handles custom Elementor form checkouts, dynamic promos, CSV exports, and email notifications.
-Version: 3.0
+Description: Handles Elementor form checkouts, dynamic promos, CSV exports, and dynamic email notifications.
+Version: 4.0
 Author: Fareed M Rifaideen
 */
 
@@ -42,29 +42,14 @@ function tcb_create_local_transaction_table() {
 }
 
 // ==========================================
-// 2. ORDER MANAGEMENT DASHBOARD
+// 2. ADMIN MENUS & DASHBOARD
 // ==========================================
-add_action('admin_menu', 'tcb_register_order_dashboard');
+add_action('admin_menu', 'tcb_register_admin_menus');
 
-function tcb_register_order_dashboard() {
-    add_menu_page(
-        'Turkey Orders', 
-        'Turkey Orders', 
-        'manage_options', 
-        'tcb-turkey-orders', 
-        'tcb_render_order_dashboard', 
-        'dashicons-list-view', 
-        56
-    );
-
-    add_submenu_page(
-        'tcb-turkey-orders',
-        'View Orders',
-        'View Orders',
-        'manage_options',
-        'tcb-turkey-orders',
-        'tcb_render_order_dashboard'
-    );
+function tcb_register_admin_menus() {
+    add_menu_page('Turkey Orders', 'Turkey Orders', 'manage_options', 'tcb-turkey-orders', 'tcb_render_order_dashboard', 'dashicons-list-view', 56);
+    add_submenu_page('tcb-turkey-orders', 'View Orders', 'View Orders', 'manage_options', 'tcb-turkey-orders', 'tcb_render_order_dashboard');
+    add_submenu_page('tcb-turkey-orders', 'Settings', 'Settings', 'manage_options', 'tcb-settings', 'tcb_render_settings_page');
 }
 
 function tcb_render_order_dashboard() {
@@ -123,13 +108,43 @@ function tcb_render_order_dashboard() {
 }
 
 // ==========================================
-// 3. CSV EXPORT LOGIC
+// 3. SETTINGS DASHBOARD (EMAILS)
+// ==========================================
+add_action('admin_init', 'tcb_register_settings');
+
+function tcb_register_settings() {
+    register_setting('tcb_settings_group', 'tcb_notification_emails');
+}
+
+function tcb_render_settings_page() {
+    ?>
+    <div class="wrap">
+        <h1>Bridge Settings</h1>
+        <form method="post" action="options.php">
+            <?php settings_fields('tcb_settings_group'); ?>
+            <?php do_settings_sections('tcb_settings_group'); ?>
+            <table class="form-table">
+                <tr valign="top">
+                    <th scope="row">Order Notification Emails</th>
+                    <td>
+                        <input type="text" name="tcb_notification_emails" value="<?php echo esc_attr(get_option('tcb_notification_emails', 'fareed@thecyclehub.com, marketing@thecyclehub.com')); ?>" class="regular-text" style="width: 100%; max-width: 600px;" />
+                        <p class="description">Enter email addresses separated by commas. These addresses will receive an alert instantly when an order is successfully paid.</p>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button(); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// ==========================================
+// 4. CSV EXPORT LOGIC
 // ==========================================
 add_action('admin_action_tcb_export_csv', 'tcb_export_orders_csv');
 
 function tcb_export_orders_csv() {
     if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
-
     global $wpdb;
     $table_name = $wpdb->prefix . 'tcb_transactions';
     $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY order_date DESC", ARRAY_A);
@@ -140,45 +155,32 @@ function tcb_export_orders_csv() {
     $output = fopen('php://output', 'w');
     fputcsv($output, array('DB ID', 'Order Ref', 'Customer Name', 'Customer Email', 'Customer Phone', 'Preferred Date', 'Notes', 'Sets', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'N-Genius Ref', 'Status', 'Order Date'));
 
-    foreach ($results as $row) {
-        fputcsv($output, $row);
-    }
+    foreach ($results as $row) { fputcsv($output, $row); }
     fclose($output);
     exit;
 }
 
 // ==========================================
-// 4. PROMO CODE MANAGEMENT (CUSTOM POST TYPE)
+// 5. PROMO CODE MANAGEMENT (CUSTOM POST TYPE)
 // ==========================================
 add_action('init', 'tcb_register_promo_cpt');
 
 function tcb_register_promo_cpt() {
     register_post_type('tcb_promo', array(
-        'labels' => array(
-            'name'          => 'Promo Codes',
-            'singular_name' => 'Promo Code',
-            'add_new'       => 'Add New Promo',
-            'add_new_item'  => 'Add New Promo Code',
-            'edit_item'     => 'Edit Promo Code',
-        ),
-        'public'      => false,
-        'show_ui'     => true,
-        'show_in_menu'=> 'tcb-turkey-orders', 
-        'supports'    => array('title'), 
+        'labels' => array('name' => 'Promo Codes', 'singular_name' => 'Promo Code', 'add_new' => 'Add New Promo', 'add_new_item' => 'Add New Promo Code', 'edit_item' => 'Edit Promo Code'),
+        'public' => false, 'show_ui' => true, 'show_in_menu'=> 'tcb-turkey-orders', 'supports' => array('title'), 
     ));
 }
 
 add_action('add_meta_boxes', 'tcb_add_promo_meta_box');
-function tcb_add_promo_meta_box() {
-    add_meta_box('tcb_promo_details', 'Discount Details', 'tcb_render_promo_meta_box', 'tcb_promo', 'normal', 'high');
-}
+function tcb_add_promo_meta_box() { add_meta_box('tcb_promo_details', 'Discount Details', 'tcb_render_promo_meta_box', 'tcb_promo', 'normal', 'high'); }
 
 function tcb_render_promo_meta_box($post) {
     wp_nonce_field('tcb_save_promo_data', 'tcb_promo_nonce');
     $type = get_post_meta($post->ID, '_promo_type', true) ?: 'fixed';
     $value = get_post_meta($post->ID, '_promo_value', true) ?: '';
     ?>
-    <p><strong style="color:#dc2626;">Instruction:</strong> Use the Title field above as the actual Promo Code (e.g., VIP2026, STAFF).</p>
+    <p><strong style="color:#dc2626;">Instruction:</strong> Use the Title field above as the actual Promo Code (e.g., VIP2026).</p>
     <table class="form-table">
         <tr>
             <th><label for="promo_type">Discount Type</label></th>
@@ -204,7 +206,6 @@ function tcb_save_promo_meta($post_id) {
     if (!isset($_POST['tcb_promo_nonce']) || !wp_verify_nonce($_POST['tcb_promo_nonce'], 'tcb_save_promo_data')) return;
     if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
     if (!current_user_can('edit_post', $post_id)) return;
-
     if (isset($_POST['promo_type'])) { update_post_meta($post_id, '_promo_type', sanitize_text_field($_POST['promo_type'])); }
     if (isset($_POST['promo_value'])) { update_post_meta($post_id, '_promo_value', floatval($_POST['promo_value'])); }
 }
@@ -223,7 +224,7 @@ function tcb_get_valid_promos() {
 }
 
 // ==========================================
-// 5. AJAX: LIVE PROMO VALIDATOR
+// 6. AJAX: LIVE PROMO VALIDATOR
 // ==========================================
 add_action('wp_ajax_nopriv_tcb_validate_promo', 'tcb_ajax_validate_promo');
 add_action('wp_ajax_tcb_validate_promo', 'tcb_ajax_validate_promo');
@@ -250,11 +251,12 @@ function tcb_ajax_validate_promo() {
 }
 
 // ==========================================
-// 6. EMAIL NOTIFICATION SYSTEM
+// 7. EMAIL NOTIFICATION SYSTEM
 // ==========================================
 function tcb_send_new_order_email($order_data) {
-    // IMPORTANT: Add the actual email addresses here
-    $to = array('fareed@thecyclehub.com', 'marketing@thecyclehub.com'); 
+    // Dynamically pull emails from the settings dashboard
+    $emails_option = get_option('tcb_notification_emails', 'fareed@thecyclehub.com, marketing@thecyclehub.com');
+    $to = array_map('trim', explode(',', $emails_option));
     
     $subject = 'New Turkey Order Confirmed - ' . $order_data['order_ref'];
     
@@ -267,12 +269,12 @@ function tcb_send_new_order_email($order_data) {
     $message .= "--- ORDER DETAILS ---\n";
     $message .= "Sets Ordered: " . $order_data['sets'] . "\n";
     $message .= "Preferred Date: " . $order_data['preferred_date'] . "\n";
-    $message .= "Notes/Allergies: " . ($order_data['notes'] ?: 'None provided') . "\n\n";
+    $message .= "Notes: " . ($order_data['notes'] ?: 'None provided') . "\n\n";
     
     $message .= "--- PAYMENT DETAILS ---\n";
     $message .= "Amount Paid: AED " . $order_data['amount'] . "\n";
     $message .= "Promo Code Used: " . ($order_data['promo_code'] ?: 'None') . "\n";
-    $message .= "Gateway Ref: " . ($order_data['ngenius_ref'] ?: 'N/A (100% Free Bypass)') . "\n";
+    $message .= "Gateway Ref: " . ($order_data['ngenius_ref'] ?: 'N/A (100% Free VIP)') . "\n";
     $message .= "Current Status: " . $order_data['status'] . "\n";
     
     $headers = array('Content-Type: text/plain; charset=UTF-8');
@@ -280,7 +282,7 @@ function tcb_send_new_order_email($order_data) {
 }
 
 // ==========================================
-// 7. AJAX: FINAL PAYMENT PROCESSOR
+// 8. AJAX: FINAL PAYMENT PROCESSOR
 // ==========================================
 add_action('wp_ajax_nopriv_tcb_process_turkey', 'tcb_process_turkey_payment');
 add_action('wp_ajax_tcb_process_turkey', 'tcb_process_turkey_payment');
@@ -328,13 +330,11 @@ function tcb_process_turkey_payment() {
         'status'         => 'Pending'
     ));
 
-    // VIP Bypass handling (Sends email immediately since gateway is skipped)
+    // VIP Bypass handling
     if ($final_amount <= 0) {
         $wpdb->update($table_name, array('status' => 'Paid - 100% Free VIP'), array('order_ref' => $local_order_id));
-        
         $order_data = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE order_ref = %s", $local_order_id), ARRAY_A);
         if ($order_data) { tcb_send_new_order_email($order_data); }
-
         wp_send_json_success( array( 'payment_url' => site_url('/thank-you/?ref=' . $local_order_id . '-VIP') ) );
     }
 
@@ -369,7 +369,7 @@ function tcb_process_turkey_payment() {
 }
 
 // ==========================================
-// 8. VERIFICATION SHORTCODE
+// 9. VERIFICATION SHORTCODE
 // ==========================================
 add_shortcode('tcb_verify_payment', 'tcb_render_verification_status');
 
@@ -411,10 +411,8 @@ function tcb_render_verification_status() {
             
             if ($order_data && $order_data['status'] === 'Pending') {
                 $wpdb->update($table_name, array('status' => 'Paid - ' . $state), array('ngenius_ref' => $reference));
-                
-                // Update array context and send email
                 $order_data['status'] = 'Paid - ' . $state;
-                tcb_send_new_order_email($order_data);
+                tcb_send_new_order_email($order_data); // Send alert
             }
 
             return '<div style="padding:30px; background:#f4fdf4; border:2px solid #176b3b; text-align:center; border-radius:12px; margin-bottom: 20px;">
