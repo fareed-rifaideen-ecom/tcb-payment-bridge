@@ -3,7 +3,7 @@
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
 Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, dashboard management, and deadline enforcement.
-Version: 5.4
+Version: 5.5
 Author: Fareed M Rifaideen
 */
 
@@ -181,10 +181,10 @@ function tcb_export_orders_csv() {
     $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY order_date DESC", ARRAY_A);
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=catering-orders-' . date('Y-m-d') . '.csv');
+    header('Content-Disposition: attachment; filename=checkout-orders-' . date('Y-m-d') . '.csv');
 
     $output = fopen('php://output', 'w');
-    fputcsv($output, array('DB ID', 'Order Ref', 'Item Name', 'Customer Name', 'Email', 'Phone', 'Pickup Date', 'Pickup Time', 'Qty', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'Gateway Ref', 'Status', 'Order Placed On', 'Notes'));
+    fputcsv($output, array('DB ID', 'Order Ref', 'Item Name', 'Customer Name', 'Customer Email', 'Customer Phone', 'Pickup Date', 'Pickup Time', 'Qty', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'N-Genius Ref', 'Status', 'Order Date', 'Notes'));
 
     foreach ($results as $row) {
         $schedule = explode(' at ', $row['preferred_date']);
@@ -512,7 +512,7 @@ add_action('wp_ajax_tcb_process_turkey', 'tcb_process_turkey_payment');
 function tcb_process_turkey_payment() {
     $item_name  = isset($_POST['cb_item_name']) ? sanitize_text_field($_POST['cb_item_name']) : 'Turkey Takeaway 2026';
     
-    // 1. Enforce Deadline Server-Side for the Turkey Campaign (Dubai Time)
+    // Enforce Deadline Server-Side for the Turkey Campaign (Dubai Time)
     if (strpos(strtolower($item_name), 'turkey') !== false) {
         $deadline_timestamp = strtotime('2026-12-22T23:59:59+04:00');
         if (time() > $deadline_timestamp) {
@@ -538,6 +538,7 @@ function tcb_process_turkey_payment() {
     if (!empty($hash)) {
         $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
     } else {
+        $item_name = 'Turkey Takeaway 2026';
         $base_price = 600;
         $is_valid = true;
     }
@@ -671,24 +672,35 @@ function tcb_send_new_order_email($order_data) {
     $subject = 'New Order Confirmed - ' . $order_data['order_ref'];
     
     $message = "A new order has been successfully paid via the checkout bridge.\n\n";
-    $message .= "--- ITEM DETAILS ---\n";
-    $message .= "Item: " . $order_data['item_name'] . "\n";
-    $message .= "Quantity: " . $order_data['sets'] . "\n\n";
     
-    $message .= "--- CUSTOMER DETAILS ---\n";
-    $message .= "Name: " . $order_data['customer_name'] . "\n";
-    $message .= "Email: " . $order_data['customer_email'] . "\n";
-    $message .= "Phone: " . $order_data['customer_phone'] . "\n\n";
+    $message .= "=================================\n";
+    $message .= "ORDER SUMMARY\n";
+    $message .= "=================================\n";
+    $message .= "Order Reference: " . $order_data['order_ref'] . "\n";
+    $message .= "Item Ordered: " . $order_data['item_name'] . "\n";
+    $message .= "Quantity (Sets): " . $order_data['sets'] . "\n";
+    $message .= "Status: " . $order_data['status'] . "\n\n";
     
-    $message .= "--- FULFILLMENT ---\n";
-    $message .= "Preferred Date: " . $order_data['preferred_date'] . "\n";
-    $message .= "Notes: " . ($order_data['notes'] ?: 'None provided') . "\n\n";
+    $message .= "=================================\n";
+    $message .= "CUSTOMER DETAILS\n";
+    $message .= "=================================\n";
+    $message .= "Customer Name: " . $order_data['customer_name'] . "\n";
+    $message .= "Email Address: " . $order_data['customer_email'] . "\n";
+    $message .= "Phone Number: " . $order_data['customer_phone'] . "\n\n";
     
-    $message .= "--- PAYMENT DETAILS ---\n";
-    $message .= "Amount Paid: AED " . $order_data['amount'] . "\n";
-    $message .= "Promo Code Used: " . ($order_data['promo_code'] ?: 'None') . "\n";
-    $message .= "Gateway Ref: " . ($order_data['ngenius_ref'] ?: 'N/A (100% Free VIP)') . "\n";
-    $message .= "Current Status: " . $order_data['status'] . "\n";
+    $message .= "=================================\n";
+    $message .= "FULFILLMENT DETAILS\n";
+    $message .= "=================================\n";
+    $message .= "Pickup Date & Time: " . $order_data['preferred_date'] . "\n";
+    $message .= "Additional Notes: " . ($order_data['notes'] ?: 'None provided') . "\n\n";
+    
+    $message .= "=================================\n";
+    $message .= "PAYMENT DETAILS\n";
+    $message .= "=================================\n";
+    $message .= "Promo Code Applied: " . ($order_data['promo_code'] ?: 'None') . "\n";
+    $message .= "Discount Amount: AED " . $order_data['discount_amount'] . "\n";
+    $message .= "Final Amount Paid: AED " . $order_data['amount'] . "\n";
+    $message .= "N-Genius Gateway Ref: " . ($order_data['ngenius_ref'] ?: 'N/A (100% Free VIP)') . "\n";
     
     $headers = array('Content-Type: text/plain; charset=UTF-8');
     wp_mail($to, $subject, $message, $headers);
