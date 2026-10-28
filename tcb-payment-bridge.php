@@ -2,8 +2,8 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Hybrid checkout generator supporting both secure shortcodes and static Elementor HTML blocks.
-Version: 5.1
+Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, and an Order Management Dashboard.
+Version: 5.2
 Author: Fareed M Rifaideen
 */
 
@@ -61,16 +61,21 @@ function tcb_render_order_dashboard() {
     <div class="wrap">
         <h1 class="wp-heading-inline">Checkout Bridge Orders</h1>
         <a href="<?php echo esc_url(admin_url('admin.php?action=tcb_export_csv')); ?>" class="page-title-action">Export to CSV</a>
+        
+        <?php if (isset($_GET['deleted']) && $_GET['deleted'] == '1') : ?>
+            <div class="notice notice-success is-dismissible"><p>Order permanently deleted.</p></div>
+        <?php endif; ?>
+
         <table class="wp-list-table widefat fixed striped" style="margin-top:15px;">
             <thead>
                 <tr>
-                    <th style="width: 120px;">Date</th>
-                    <th>Order Ref</th>
+                    <th style="width: 100px;">Date</th>
+                    <th style="width: 150px;">Order Ref</th>
                     <th>Item</th>
                     <th>Customer</th>
-                    <th>Email</th>
-                    <th>Phone</th>
-                    <th style="width: 60px;">Sets</th>
+                    <th>Contact Info</th>
+                    <th style="width: 140px;">Pickup Schedule</th>
+                    <th style="width: 50px;">Qty</th>
                     <th>Promo</th>
                     <th>Total Paid</th>
                     <th>Status</th>
@@ -82,14 +87,23 @@ function tcb_render_order_dashboard() {
                 <?php else : ?>
                     <?php foreach ($results as $row) : 
                         $status_color = (strpos($row->status, 'Paid') !== false) ? 'color: #176b3b; font-weight: bold;' : ((strpos($row->status, 'Pending') !== false) ? 'color: #b45309;' : 'color: #dc2626;');
+                        $delete_url = wp_nonce_url(admin_url('admin-post.php?action=tcb_delete_order&id=' . $row->id), 'tcb_delete_order_' . $row->id);
                     ?>
                         <tr>
                             <td><?php echo esc_html(date('M d, H:i', strtotime($row->order_date))); ?></td>
-                            <td><strong><?php echo esc_html($row->order_ref); ?></strong></td>
+                            <td>
+                                <strong><?php echo esc_html($row->order_ref); ?></strong>
+                                <div class="row-actions">
+                                    <span class="trash"><a href="<?php echo esc_url($delete_url); ?>" style="color:#a00;" onclick="return confirm('Are you sure you want to permanently delete this order?');">Trash</a></span>
+                                </div>
+                            </td>
                             <td><?php echo esc_html($row->item_name); ?></td>
                             <td><?php echo esc_html($row->customer_name); ?></td>
-                            <td><a href="mailto:<?php echo esc_attr($row->customer_email); ?>"><?php echo esc_html($row->customer_email); ?></a></td>
-                            <td><?php echo esc_html($row->customer_phone); ?></td>
+                            <td>
+                                <a href="mailto:<?php echo esc_attr($row->customer_email); ?>"><?php echo esc_html($row->customer_email); ?></a><br>
+                                <small><?php echo esc_html($row->customer_phone); ?></small>
+                            </td>
+                            <td><strong><?php echo esc_html($row->preferred_date); ?></strong></td>
                             <td><?php echo esc_html($row->sets); ?></td>
                             <td>
                                 <?php if($row->promo_code): ?>
@@ -108,7 +122,28 @@ function tcb_render_order_dashboard() {
 }
 
 // ==========================================
-// 3. SETTINGS DASHBOARD & EXPORT
+// 3. DELETE ACTION HANDLER
+// ==========================================
+add_action('admin_post_tcb_delete_order', 'tcb_handle_delete_order');
+
+function tcb_handle_delete_order() {
+    if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
+    
+    $id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+    if (!$id || !isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'tcb_delete_order_' . $id)) {
+        wp_die('Security check failed.');
+    }
+
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'tcb_transactions';
+    $wpdb->delete($table_name, array('id' => $id), array('%d'));
+
+    wp_redirect(admin_url('admin.php?page=tcb-turkey-orders&deleted=1'));
+    exit;
+}
+
+// ==========================================
+// 4. SETTINGS DASHBOARD & EXPORT
 // ==========================================
 add_action('admin_init', 'tcb_register_settings');
 
@@ -157,7 +192,7 @@ function tcb_export_orders_csv() {
 }
 
 // ==========================================
-// 4. PROMO CODE MANAGEMENT (CPT)
+// 5. PROMO CODE MANAGEMENT (CPT)
 // ==========================================
 add_action('init', 'tcb_register_promo_cpt');
 
@@ -217,7 +252,7 @@ function tcb_get_valid_promos() {
 }
 
 // ==========================================
-// 5. SHORTCODE FORM GENERATOR
+// 6. SHORTCODE FORM GENERATOR
 // ==========================================
 add_shortcode('tcb_checkout', 'tcb_render_checkout_form');
 
@@ -405,7 +440,7 @@ function tcb_render_checkout_form($atts) {
 }
 
 // ==========================================
-// 6. SERVER-SIDE SECURITY & MATH HELPERS
+// 7. SERVER-SIDE SECURITY & MATH HELPERS
 // ==========================================
 function tcb_verify_checkout_payload($item_name, $base_price, $hash) {
     return wp_hash($item_name . '|' . $base_price, 'nonce') === $hash;
@@ -425,7 +460,6 @@ function tcb_ajax_validate_promo() {
     if (!empty($hash)) {
         $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
     } else {
-        // STATIC HTML FALLBACK: Allows Elementor custom block to function without strict hash
         $base_price = 600;
         $is_valid = true;
     }
@@ -446,7 +480,7 @@ function tcb_ajax_validate_promo() {
 }
 
 // ==========================================
-// 7. AJAX: FINAL PAYMENT PROCESSOR
+// 8. AJAX: FINAL PAYMENT PROCESSOR
 // ==========================================
 add_action('wp_ajax_nopriv_tcb_process_turkey', 'tcb_process_turkey_payment');
 add_action('wp_ajax_tcb_process_turkey', 'tcb_process_turkey_payment');
@@ -471,7 +505,6 @@ function tcb_process_turkey_payment() {
     if (!empty($hash)) {
         $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
     } else {
-        // STATIC HTML FALLBACK: Allows Elementor custom block to function without strict hash
         $item_name = 'Turkey Takeaway 2026';
         $base_price = 600;
         $is_valid = true;
@@ -544,7 +577,7 @@ function tcb_process_turkey_payment() {
 }
 
 // ==========================================
-// 8. VERIFICATION SHORTCODE & EMAIL FIRING
+// 9. VERIFICATION SHORTCODE & EMAIL FIRING
 // ==========================================
 add_shortcode('tcb_verify_payment', 'tcb_render_verification_status');
 
