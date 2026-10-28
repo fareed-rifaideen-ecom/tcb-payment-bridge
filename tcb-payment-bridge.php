@@ -2,8 +2,8 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, and an Order Management Dashboard.
-Version: 5.3
+Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, dashboard management, and deadline enforcement.
+Version: 5.4
 Author: Fareed M Rifaideen
 */
 
@@ -184,33 +184,15 @@ function tcb_export_orders_csv() {
     header('Content-Disposition: attachment; filename=catering-orders-' . date('Y-m-d') . '.csv');
 
     $output = fopen('php://output', 'w');
-    
-    // Explicitly mapped headers including separated Date and Time columns
-    fputcsv($output, array(
-        'Order Ref', 
-        'Item Name', 
-        'Customer Name', 
-        'Email', 
-        'Phone', 
-        'Pickup Date', 
-        'Pickup Time', 
-        'Qty', 
-        'Promo Code', 
-        'Discount (AED)', 
-        'Amount Paid (AED)', 
-        'Gateway Ref', 
-        'Status', 
-        'Order Placed On',
-        'Notes'
-    ));
+    fputcsv($output, array('DB ID', 'Order Ref', 'Item Name', 'Customer Name', 'Email', 'Phone', 'Pickup Date', 'Pickup Time', 'Qty', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'Gateway Ref', 'Status', 'Order Placed On', 'Notes'));
 
     foreach ($results as $row) {
-        // Split the combined "YYYY-MM-DD at HH:MM PM" string back into Date and Time
         $schedule = explode(' at ', $row['preferred_date']);
         $pickup_date = isset($schedule[0]) ? $schedule[0] : $row['preferred_date'];
         $pickup_time = isset($schedule[1]) ? $schedule[1] : '';
 
         fputcsv($output, array(
+            $row['id'],
             $row['order_ref'],
             $row['item_name'],
             $row['customer_name'],
@@ -528,6 +510,16 @@ add_action('wp_ajax_nopriv_tcb_process_turkey', 'tcb_process_turkey_payment');
 add_action('wp_ajax_tcb_process_turkey', 'tcb_process_turkey_payment');
 
 function tcb_process_turkey_payment() {
+    $item_name  = isset($_POST['cb_item_name']) ? sanitize_text_field($_POST['cb_item_name']) : 'Turkey Takeaway 2026';
+    
+    // 1. Enforce Deadline Server-Side for the Turkey Campaign (Dubai Time)
+    if (strpos(strtolower($item_name), 'turkey') !== false) {
+        $deadline_timestamp = strtotime('2026-12-22T23:59:59+04:00');
+        if (time() > $deadline_timestamp) {
+            wp_send_json_error('Booking is officially closed. No new orders can be accepted.');
+        }
+    }
+
     global $wpdb;
     
     $first_name = isset($_POST['firstName']) ? sanitize_text_field($_POST['firstName']) : '';
@@ -539,7 +531,6 @@ function tcb_process_turkey_payment() {
     $sets       = isset($_POST['sets']) ? intval($_POST['sets']) : 0;
     $promo      = isset($_POST['promo']) ? strtoupper(sanitize_text_field($_POST['promo'])) : '';
     
-    $item_name  = isset($_POST['cb_item_name']) ? sanitize_text_field($_POST['cb_item_name']) : '';
     $base_price = isset($_POST['cb_base_price']) ? floatval($_POST['cb_base_price']) : 0;
     $hash       = isset($_POST['cb_price_hash']) ? sanitize_text_field($_POST['cb_price_hash']) : '';
 
@@ -547,7 +538,6 @@ function tcb_process_turkey_payment() {
     if (!empty($hash)) {
         $is_valid = tcb_verify_checkout_payload($item_name, $base_price, $hash);
     } else {
-        $item_name = 'Turkey Takeaway 2026';
         $base_price = 600;
         $is_valid = true;
     }
