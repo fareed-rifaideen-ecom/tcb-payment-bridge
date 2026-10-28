@@ -2,8 +2,8 @@
 /*
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
-Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, dashboard management, and deadline enforcement.
-Version: 5.5
+Description: Shortcode-based checkout generator with dynamic pricing, CSV exports, email notifications, dashboard management, deadline enforcement, and UI toggles.
+Version: 6.0
 Author: Fareed M Rifaideen
 */
 
@@ -149,15 +149,24 @@ add_action('admin_init', 'tcb_register_settings');
 
 function tcb_register_settings() {
     register_setting('tcb_settings_group', 'tcb_notification_emails');
+    register_setting('tcb_settings_group', 'tcb_enable_promo_field');
 }
 
 function tcb_render_settings_page() {
+    $promo_enabled = get_option('tcb_enable_promo_field', 'yes');
     ?>
     <div class="wrap">
         <h1>Bridge Settings</h1>
         <form method="post" action="options.php">
             <?php settings_fields('tcb_settings_group'); ?>
             <table class="form-table">
+                <tr valign="top">
+                    <th scope="row">Enable Promo Code Field</th>
+                    <td>
+                        <input type="checkbox" name="tcb_enable_promo_field" id="tcb_enable_promo_field" value="yes" <?php checked($promo_enabled, 'yes'); ?> />
+                        <label for="tcb_enable_promo_field">Display the promo code input box on the frontend checkout form.</label>
+                    </td>
+                </tr>
                 <tr valign="top">
                     <th scope="row">Order Notification Emails</th>
                     <td>
@@ -181,10 +190,13 @@ function tcb_export_orders_csv() {
     $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY order_date DESC", ARRAY_A);
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=checkout-orders-' . date('Y-m-d') . '.csv');
+    header('Content-Disposition: attachment; filename=catering-orders-' . date('Y-m-d') . '.csv');
 
     $output = fopen('php://output', 'w');
-    fputcsv($output, array('DB ID', 'Order Ref', 'Item Name', 'Customer Name', 'Customer Email', 'Customer Phone', 'Pickup Date', 'Pickup Time', 'Qty', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'N-Genius Ref', 'Status', 'Order Date', 'Notes'));
+    
+    fputcsv($output, array(
+        'Order Ref', 'Item Name', 'Customer Name', 'Email', 'Phone', 'Pickup Date', 'Pickup Time', 'Qty', 'Promo Code', 'Discount (AED)', 'Amount Paid (AED)', 'Gateway Ref', 'Status', 'Order Placed On', 'Notes'
+    ));
 
     foreach ($results as $row) {
         $schedule = explode(' at ', $row['preferred_date']);
@@ -192,22 +204,7 @@ function tcb_export_orders_csv() {
         $pickup_time = isset($schedule[1]) ? $schedule[1] : '';
 
         fputcsv($output, array(
-            $row['id'],
-            $row['order_ref'],
-            $row['item_name'],
-            $row['customer_name'],
-            $row['customer_email'],
-            $row['customer_phone'],
-            $pickup_date,
-            $pickup_time,
-            $row['sets'],
-            $row['promo_code'],
-            $row['discount_amount'],
-            $row['amount'],
-            $row['ngenius_ref'],
-            $row['status'],
-            $row['order_date'],
-            $row['notes']
+            $row['order_ref'], $row['item_name'], $row['customer_name'], $row['customer_email'], $row['customer_phone'], $pickup_date, $pickup_time, $row['sets'], $row['promo_code'], $row['discount_amount'], $row['amount'], $row['ngenius_ref'], $row['status'], $row['order_date'], $row['notes']
         ));
     }
     
@@ -216,7 +213,17 @@ function tcb_export_orders_csv() {
 }
 
 // ==========================================
-// 5. PROMO CODE MANAGEMENT (CPT)
+// 5. FRONTEND DATA BRIDGE (JS GLOBALS)
+// ==========================================
+add_action('wp_head', 'tcb_inject_frontend_settings');
+
+function tcb_inject_frontend_settings() {
+    $show_promo = get_option('tcb_enable_promo_field', 'yes') === 'yes' ? 'true' : 'false';
+    echo "<script>window.tcbSettings = { showPromo: {$show_promo} };</script>\n";
+}
+
+// ==========================================
+// 6. PROMO CODE MANAGEMENT (CPT)
 // ==========================================
 add_action('init', 'tcb_register_promo_cpt');
 
@@ -273,194 +280,6 @@ function tcb_get_valid_promos() {
         }
     }
     return $promos;
-}
-
-// ==========================================
-// 6. SHORTCODE FORM GENERATOR
-// ==========================================
-add_shortcode('tcb_checkout', 'tcb_render_checkout_form');
-
-function tcb_render_checkout_form($atts) {
-    $a = shortcode_atts(array(
-        'item'  => 'Turkey Takeaway Set 2026',
-        'price' => '600'
-    ), $atts);
-
-    $item_name = sanitize_text_field($a['item']);
-    $price = floatval($a['price']);
-    $price_hash = wp_hash($item_name . '|' . $price, 'nonce');
-
-    ob_start();
-    ?>
-    <form class="cb-form cb-reveal is-visible" id="cb-booking-form">
-        <input type="hidden" name="cb_item_name" id="cb_item_name" value="<?php echo esc_attr($item_name); ?>">
-        <input type="hidden" name="cb_base_price" id="cb_base_price" value="<?php echo esc_attr($price); ?>">
-        <input type="hidden" name="cb_price_hash" id="cb_price_hash" value="<?php echo esc_attr($price_hash); ?>">
-
-        <h3>Reserve <?php echo esc_html($item_name); ?></h3>
-        <p class="cb-form__intro">Fields marked with * are required. Base Price: AED <?php echo esc_html($price); ?></p>
-        
-        <div class="cb-form__grid">
-            <div class="cb-field"><label for="cb-first-name">First name *</label><input class="cb-input" id="cb-first-name" name="firstName" required autocomplete="given-name"></div>
-            <div class="cb-field"><label for="cb-last-name">Last name *</label><input class="cb-input" id="cb-last-name" name="lastName" required autocomplete="family-name"></div>
-            <div class="cb-field"><label for="cb-phone">Mobile or WhatsApp *</label><input class="cb-input" id="cb-phone" name="phone" type="tel" required autocomplete="tel"></div>
-            <div class="cb-field"><label for="cb-email">Email address *</label><input class="cb-input" id="cb-email" name="email" type="email" required autocomplete="email"></div>
-            
-            <div class="cb-field"><label for="cb-sets">Quantity *</label>
-                <select class="cb-input" id="cb-sets" name="sets" required>
-                    <option value="">Select</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-                </select>
-            </div>
-            
-            <div class="cb-field"><label for="cb-date">Preferred date *</label><input class="cb-input" id="cb-date" name="date" type="date" required></div>
-            
-            <div class="cb-field cb-field--full" style="margin-top: 10px;">
-                <label for="cb-promo">Promo Code (Optional)</label>
-                <div style="display: flex; gap: 10px;">
-                    <input class="cb-input" id="cb-promo" name="promo" style="text-transform: uppercase;" placeholder="Enter code">
-                    <button type="button" id="cb-apply-promo" class="cb-btn cb-btn--outline" style="padding: 10px 20px; min-height: auto;">Apply</button>
-                </div>
-                <div id="cb-promo-msg" style="font-size: 13px; margin-top: 5px; font-weight: 700;"></div>
-            </div>
-
-            <div class="cb-field cb-field--full" style="background: #f4fdf4; padding: 15px 20px; border-radius: 12px; border: 1px solid #76c84b; margin: 15px 0;">
-                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 16px;">
-                    <span>Subtotal:</span>
-                    <span id="cb-subtotal-display">AED 0.00</span>
-                </div>
-                <div id="cb-discount-row" style="display: none; justify-content: space-between; align-items: center; font-size: 16px; color: #176b3b; margin-top: 5px;">
-                    <span>Discount:</span>
-                    <span id="cb-discount-display">- AED 0.00</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 20px; font-weight: 800; border-top: 1px solid #76c84b; padding-top: 10px; margin-top: 10px;">
-                    <span>Order Total:</span>
-                    <span id="cb-total-display">AED 0.00</span>
-                </div>
-            </div>
-
-            <div class="cb-field cb-field--full"><label for="cb-notes">Additional notes</label><textarea class="cb-input" id="cb-notes" name="notes" placeholder="Collection or delivery preference, allergies or other notes"></textarea></div>
-        </div>
-        <button class="cb-btn cb-btn--primary cb-form__submit" type="submit">Place Order</button>
-        <p class="cb-form__status" id="cb-form-status" role="status"></p>
-    </form>
-
-    <script>
-    (function(){
-        var form = document.querySelector('#cb-booking-form');
-        if(!form) return;
-        
-        var submitBtn = document.querySelector('.cb-form__submit');
-        var status = document.querySelector('#cb-form-status');
-        var setsDropdown = document.querySelector('#cb-sets');
-        var promoInput = document.querySelector('#cb-promo');
-        var applyPromoBtn = document.querySelector('#cb-apply-promo');
-        var promoMsg = document.querySelector('#cb-promo-msg');
-        
-        var subtotalDisp = document.querySelector('#cb-subtotal-display');
-        var discountRow = document.querySelector('#cb-discount-row');
-        var discountDisp = document.querySelector('#cb-discount-display');
-        var totalDisp = document.querySelector('#cb-total-display');
-
-        var basePrice = parseFloat(document.getElementById('cb_base_price').value);
-        var activeDiscount = 0;
-
-        function updatePricing() {
-            var sets = parseInt(setsDropdown.value) || 0;
-            var subtotal = sets * basePrice;
-            
-            if (sets === 0) {
-                activeDiscount = 0;
-                promoInput.value = '';
-                promoMsg.innerText = '';
-            }
-
-            var finalTotal = Math.max(0, subtotal - activeDiscount);
-            subtotalDisp.innerText = 'AED ' + subtotal.toFixed(2);
-            
-            if (activeDiscount > 0) {
-                discountRow.style.display = 'flex';
-                discountDisp.innerText = '- AED ' + activeDiscount.toFixed(2);
-            } else {
-                discountRow.style.display = 'none';
-            }
-            totalDisp.innerText = 'AED ' + finalTotal.toFixed(2);
-        }
-
-        setsDropdown.addEventListener('change', function() {
-            if (promoInput.value && activeDiscount > 0) { applyPromoBtn.click(); } else { updatePricing(); }
-        });
-
-        applyPromoBtn.addEventListener('click', function() {
-            var promoCode = promoInput.value.trim();
-            var sets = parseInt(setsDropdown.value) || 0;
-
-            if (sets < 1) {
-                promoMsg.style.color = '#991b1b'; promoMsg.innerText = 'Select a quantity first.'; return;
-            }
-            if (!promoCode) {
-                promoMsg.style.color = '#991b1b'; promoMsg.innerText = 'Enter a code.';
-                activeDiscount = 0; updatePricing(); return;
-            }
-
-            applyPromoBtn.innerText = '...'; applyPromoBtn.disabled = true;
-
-            var formData = new URLSearchParams();
-            formData.append('action', 'tcb_validate_promo');
-            formData.append('promo', promoCode);
-            formData.append('sets', sets);
-            formData.append('cb_item_name', document.getElementById('cb_item_name').value);
-            formData.append('cb_base_price', basePrice);
-            formData.append('cb_price_hash', document.getElementById('cb_price_hash').value);
-
-            fetch('/wp-admin/admin-ajax.php', { method: 'POST', body: formData })
-            .then(res => res.json())
-            .then(response => {
-                if (response.success) {
-                    activeDiscount = parseFloat(response.data.discount);
-                    promoMsg.style.color = '#176b3b'; promoMsg.innerText = '✓ Applied!';
-                } else {
-                    activeDiscount = 0;
-                    promoMsg.style.color = '#991b1b'; promoMsg.innerText = response.data;
-                }
-                updatePricing();
-                applyPromoBtn.innerText = 'Apply'; applyPromoBtn.disabled = false;
-            })
-            .catch(err => {
-                activeDiscount = 0; promoMsg.style.color = '#991b1b'; promoMsg.innerText = 'Connection error.';
-                updatePricing(); applyPromoBtn.innerText = 'Apply'; applyPromoBtn.disabled = false;
-            });
-        });
-
-        form.addEventListener('submit', function(e){
-            e.preventDefault();
-            if(!form.checkValidity()){ form.reportValidity(); return; }
-
-            submitBtn.innerText = 'Redirecting...'; submitBtn.disabled = true;
-            status.classList.remove('is-visible');
-
-            var formData = new FormData(form);
-            formData.append('action', 'tcb_process_turkey');
-
-            fetch('/wp-admin/admin-ajax.php', { method: 'POST', body: formData })
-            .then(res => res.json())
-            .then(response => {
-                if (response.success) { window.location.href = response.data.payment_url; } 
-                else {
-                    status.innerText = 'Error: ' + (response.data || 'Failed to connect.');
-                    status.classList.add('is-visible'); status.style.background = '#fef2f2'; status.style.color = '#991b1b';
-                    submitBtn.innerText = 'Place Order'; submitBtn.disabled = false;
-                }
-            })
-            .catch(err => {
-                status.innerText = 'Connection error. Please try again.';
-                status.classList.add('is-visible'); status.style.background = '#fef2f2'; status.style.color = '#991b1b';
-                submitBtn.innerText = 'Place Order'; submitBtn.disabled = false;
-            });
-        });
-    }());
-    </script>
-    <?php
-    return ob_get_clean();
 }
 
 // ==========================================
