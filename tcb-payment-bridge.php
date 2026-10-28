@@ -3,7 +3,7 @@
 Plugin Name: TCB Custom Checkout Bridge
 Plugin URI: https://github.com/fareed-rifaideen-ecom/tcb-payment-bridge
 Description: Shortcode-based checkout generator with dynamic pricing, cryptographic security, CSV exports, email notifications, and an Order Management Dashboard.
-Version: 5.2
+Version: 5.3
 Author: Fareed M Rifaideen
 */
 
@@ -181,12 +181,54 @@ function tcb_export_orders_csv() {
     $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY order_date DESC", ARRAY_A);
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=checkout-orders-' . date('Y-m-d') . '.csv');
+    header('Content-Disposition: attachment; filename=catering-orders-' . date('Y-m-d') . '.csv');
 
     $output = fopen('php://output', 'w');
-    fputcsv($output, array('DB ID', 'Order Ref', 'Item Name', 'Customer Name', 'Customer Email', 'Customer Phone', 'Preferred Date', 'Notes', 'Qty', 'Promo Code', 'Discount (AED)', 'Final Amount (AED)', 'N-Genius Ref', 'Status', 'Order Date'));
+    
+    // Explicitly mapped headers including separated Date and Time columns
+    fputcsv($output, array(
+        'Order Ref', 
+        'Item Name', 
+        'Customer Name', 
+        'Email', 
+        'Phone', 
+        'Pickup Date', 
+        'Pickup Time', 
+        'Qty', 
+        'Promo Code', 
+        'Discount (AED)', 
+        'Amount Paid (AED)', 
+        'Gateway Ref', 
+        'Status', 
+        'Order Placed On',
+        'Notes'
+    ));
 
-    foreach ($results as $row) { fputcsv($output, $row); }
+    foreach ($results as $row) {
+        // Split the combined "YYYY-MM-DD at HH:MM PM" string back into Date and Time
+        $schedule = explode(' at ', $row['preferred_date']);
+        $pickup_date = isset($schedule[0]) ? $schedule[0] : $row['preferred_date'];
+        $pickup_time = isset($schedule[1]) ? $schedule[1] : '';
+
+        fputcsv($output, array(
+            $row['order_ref'],
+            $row['item_name'],
+            $row['customer_name'],
+            $row['customer_email'],
+            $row['customer_phone'],
+            $pickup_date,
+            $pickup_time,
+            $row['sets'],
+            $row['promo_code'],
+            $row['discount_amount'],
+            $row['amount'],
+            $row['ngenius_ref'],
+            $row['status'],
+            $row['order_date'],
+            $row['notes']
+        ));
+    }
+    
     fclose($output);
     exit;
 }
